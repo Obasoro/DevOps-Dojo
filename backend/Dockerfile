@@ -1,51 +1,49 @@
-# syntax=docker/dockerfile:1
+# Base Python image
+FROM python:3.10-slim AS base
 
-# Comments are provided throughout this file to help you get started.
-# If you need more help, visit the Dockerfile reference guide at
-# https://docs.docker.com/go/dockerfile-reference/
+# Set the working directory
+WORKDIR /backend
 
-# Want to help us make this template better? Share your feedback here: https://forms.gle/ybq9Krt8jtBL3iCk7
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libpq-dev \
+    curl && \
+    curl -sSL https://install.python-poetry.org | python3 - && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
-ARG PYTHON_VERSION=3.10
-FROM python:${PYTHON_VERSION}-slim as base
+# Set environment variables
+ENV PATH="/root/.local/bin:$PATH" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    POETRY_VERSION=1.7.0 \
+    PYTHONPATH="/backend"
 
-# Prevents Python from writing pyc files.
-ENV PYTHONDONTWRITEBYTECODE=1
 
-# Keeps Python from buffering stdout and stderr to avoid situations where
-# the application crashes without emitting any logs due to buffering.
-ENV PYTHONUNBUFFERED=1
 
-WORKDIR /app
+# Copy dependency files
+COPY poetry.lock pyproject.toml ./
 
-# Create a non-privileged user that the app will run under.
-# See https://docs.docker.com/go/dockerfile-user-best-practices/
-ARG UID=10001
-RUN adduser \
-    --disabled-password \
-    --gecos "" \
-    --home "/nonexistent" \
-    --shell "/sbin/nologin" \
-    --no-create-home \
-    --uid "${UID}" \
-    appuser
+# Install dependencies (including dev dependencies for local development)
+RUN poetry config virtualenvs.create false && \
+    poetry install
 
-# Download dependencies as a separate step to take advantage of Docker's caching.
-# Leverage a cache mount to /root/.cache/pip to speed up subsequent builds.
-# Leverage a bind mount to requirements.txt to avoid having to copy them into
-# into this layer.
-RUN --mount=type=cache,target=/root/.cache/pip \
-    --mount=type=bind,source=requirements.txt,target=requirements.txt \
-    python -m pip install -r requirements.txt
+# Copy the application
+COPY ./app ./app
+COPY alembic.ini .
+COPY prestart.sh .
+#COPY .env .
 
-# Switch to the non-privileged user to run the application.
-USER appuser
+# Make the prestart script executable
+RUN chmod +x prestart.sh
 
-# Copy the source code into the container.
-COPY . .
-
-# Expose the port that the application listens on.
+# Expose the application port
 EXPOSE 8000
 
-# Run the application.
-CMD uvicorn 'app.main:app' --host=0.0.0.0 --port=8000
+# Start the application with prestart script for production
+CMD ["./prestart.sh"]
+
+# Development stage
+FROM base AS development
+# Override CMD for development to enable hot reload
+CMD ["poetry", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
