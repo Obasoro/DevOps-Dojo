@@ -1,0 +1,127 @@
+version: '3.8'
+
+services:
+  traefik:
+    image: traefik:v2.11
+    container_name: traefik
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - monitoring
+      - app_network
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/config/:/etc/traefik/
+      - ./traefik/acme/:/etc/traefik/acme/
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.gimccom.com`)"
+      - "traefik.http.routers.traefik.service=api@internal"
+      - "traefik.http.routers.traefik.middlewares=auth"
+      - "traefik.http.middlewares.auth.basicauth.users=admin:$$2y$$05$$encrypted-password-here"
+
+  # Frontend Service
+  frontend:
+    # Your frontend service configuration
+    networks:
+      - app_network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.frontend.priority=1"
+      - "traefik.http.routers.frontend.entrypoints=websecure"
+      - "traefik.http.routers.frontend.tls=true"
+      - "traefik.http.routers.frontend.tls.certresolver=letsencrypt"
+
+  # Backend FastAPI Service
+  backend:
+    # Your FastAPI backend service configuration
+    networks:
+      - app_network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.backend.rule=PathPrefix(`/api`) || PathPrefix(`/docs`)"
+      - "traefik.http.routers.backend.priority=2"
+      - "traefik.http.routers.backend.entrypoints=websecure"
+      - "traefik.http.routers.backend.tls=true"
+      - "traefik.http.routers.backend.tls.certresolver=letsencrypt"
+      - "traefik.http.middlewares.strip-api-prefix.stripprefix.prefixes=/api"
+      - "traefik.http.routers.backend.middlewares=strip-api-prefix"
+
+  # Prometheus Service
+  prometheus:
+    # Your Prometheus service configuration
+    networks:
+      - monitoring
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.prometheus.rule=PathPrefix(`/prometheus`)"
+      - "traefik.http.routers.prometheus.priority=3"
+      - "traefik.http.routers.prometheus.entrypoints=websecure"
+      - "traefik.http.routers.prometheus.tls=true"
+      - "traefik.http.routers.prometheus.tls.certresolver=letsencrypt"
+      - "traefik.http.middlewares.strip-prometheus-prefix.stripprefix.prefixes=/prometheus"
+      - "traefik.http.routers.prometheus.middlewares=strip-prometheus-prefix,auth"
+
+  # Grafana Service
+  grafana:
+    # Your Grafana service configuration
+    networks:
+      - monitoring
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=PathPrefix(`/grafana`)"
+      - "traefik.http.routers.grafana.priority=3"
+      - "traefik.http.routers.grafana.entrypoints=websecure"
+      - "traefik.http.routers.grafana.tls=true"
+      - "traefik.http.routers.grafana.tls.certresolver=letsencrypt"
+      - "traefik.http.middlewares.strip-grafana-prefix.stripprefix.prefixes=/grafana"
+      - "traefik.http.routers.grafana.middlewares=strip-grafana-prefix,auth"
+
+networks:
+  app_network:
+    driver: bridge
+  monitoring:
+    driver: bridge
+
+# Traefik Configuration File (traefik.yml)
+# Place this in ./traefik/config/traefik.yml
+traefik.yml:
+  global:
+    checkNewVersion: false
+    sendAnonymousUsage: false
+
+  log:
+    level: INFO
+
+  entryPoints:
+    web:
+      address: :80
+      http:
+        redirections:
+          entryPoint:
+            to: websecure
+            scheme: https
+    websecure:
+      address: :443
+      http:
+        tls:
+          certResolver: letsencrypt
+
+  certificatesResolvers:
+    letsencrypt:
+      acme:
+        email: obasorokunle@gmail.com
+        storage: /etc/traefik/acme/acme.json
+        httpChallenge:
+          entryPoint: web
+
+  providers:
+    docker:
+      endpoint: "unix:///var/run/docker.sock"
+      exposedByDefault: false
+      network: app_network
