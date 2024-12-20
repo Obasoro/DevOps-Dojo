@@ -1,55 +1,45 @@
 # syntax=docker/dockerfile:1
 
-ARG NODE_VERSION=18
+# Use Node.js 20 as the base image
+FROM node:20-alpine AS base
+
+# Set working directory
+WORKDIR /app
 
 ################################################################################
-# Base Stage: Common settings for all stages.
-FROM node:${NODE_VERSION}-alpine AS base
+# Dependencies Stage: Install all dependencies
+FROM base AS deps
 
-# Set the working directory for all build stages.
-WORKDIR /usr/src/app
-
+# Copy package files
 COPY package*.json ./
 
+# Install all dependencies
 RUN npm install
 
 ################################################################################
-# Dependencies Stage: Install production dependencies.
-FROM base AS deps
-
-# Install production dependencies, leveraging caching for faster builds.
-
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci --omit=dev
-
-################################################################################
-# Build Stage: Install dev dependencies and build the application.
+# Build Stage: Copy source files
 FROM deps AS build
 
-# Install all dependencies, including dev dependencies, for the build process.
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci --omit=dev
-
-# Copy the source files and build the application.
-COPY . .
-
-RUN npm run build
-
+# Copy application files
 COPY . .
 
 ################################################################################
-# Final Stage: Minimal runtime image.
+# Final Stage: Setup runtime environment
 FROM base AS final
 
-# Use a non-root user for security.
-USER node
+# Copy all application files and dependencies
+COPY --from=build /app .
 
-# Copy runtime dependencies and the built application.
-COPY --from=deps /usr/src/app/node_modules ./node_modules
-#COPY --from=build /usr/src/app/dist ./dist
+# Create non-root user for security
+RUN addgroup -g 1001 nodejs && \
+    adduser -S nodejs -u 1001 -G nodejs && \
+    chown -R nodejs:nodejs /app
 
-# Expose the application port.
-EXPOSE 8000
+USER nodejs
 
-# Start the application (adjust as needed).
-CMD ["npm", "run", "dev"]
+# Expose the Vite development server port
+EXPOSE 5173
+
+# Start the development server
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+
